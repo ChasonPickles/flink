@@ -17,7 +17,7 @@ public class KSlackNoSampling extends AbstractSSlackAlg {
 
 	@Override
 	public void initiatePlan(WindowSSlack windowSSlack, SamplingPlan samplingPlan) {
-		for (int i = 0; i < windowSSlackManager.getSSSize(); i++) {
+		for (int i = 0; i < windowSSlackManager.getNumberOfSSPerWindow(); i++) {
 			samplingPlan.updatePlan(i, Integer.MAX_VALUE, 1);
 		}
 	}

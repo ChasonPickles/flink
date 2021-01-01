@@ -42,7 +42,7 @@ public final class WindowSSlackManager {
 	/* Logical division of windows */
 	private final long windowLength;
 	private final long ssLength;
-	private final int ssSize;
+	private final int numberSSPerWindow;
 	/* Watermarks. */
 	private long lastEmittedWatermark = Long.MIN_VALUE;
 	/* Structures to maintain distributions & diststore. */
@@ -63,12 +63,12 @@ public final class WindowSSlackManager {
 		final ProcessingTimeService processingTimeService,
 		final long windowLength,
 		final long ssLength,
-		final int ssSize) {
+		final int numberSSPerWindow) {
 		this.processingTimeService = processingTimeService;
 
 		this.windowLength = windowLength;
 		this.ssLength = ssLength;
-		this.ssSize = ssSize;
+		this.numberSSPerWindow = numberSSPerWindow;
 
 		this.netDelayStoreManager = new DistStoreManager(this, NET_DELAY);
 		this.interEventStoreManager = new DistStoreManager(this, GEN_DELAY);
@@ -99,8 +99,8 @@ public final class WindowSSlackManager {
 		return ssLength;
 	}
 
-	public int getSSSize() {
-		return ssSize;
+	public int getNumberOfSSPerWindow() {
+		return numberSSPerWindow;
 	}
 
 	public ProcessingTimeService getProcessingTimeService() {
@@ -117,10 +117,6 @@ public final class WindowSSlackManager {
 
 	public void setLastEmittedWatermark(long targetWatermark) {
 		lastEmittedWatermark = targetWatermark;
-	}
-
-	public WindowSSlack getWindowSSLack(long windowIndex) {
-		return windowSlacksMap.getOrDefault(windowIndex, null);
 	}
 
 	AbstractSSlackAlg getsSlackAlg() {
@@ -154,10 +150,9 @@ public final class WindowSSlackManager {
 	}
 
 	private void removeWindowSSlack(long windowIndex) {
-		WindowSSlack window = windowSlacksMap.remove(windowIndex - HISTORY_SIZE);
+		WindowSSlack window = windowSlacksMap.remove(windowIndex);
 		if (window != null) {
 			LOG.info("Removing window slack {}", windowIndex);
-			// remove
 		}
 	}
 
@@ -268,7 +263,7 @@ public final class WindowSSlackManager {
 
 		SSStatsPurger(long currTime) {
 			this.currTime = currTime;
-			this.ssUntilPurges = HISTORY_SIZE;
+			this.ssUntilPurges = HISTORY_SIZE / 2;
 		}
 
 		@Override
@@ -281,6 +276,7 @@ public final class WindowSSlackManager {
 				for (long currIndex = windowIndex - 15; currIndex <= windowIndex; currIndex++) {
 					WindowSSlack ws = windowSlacksMap.getOrDefault(windowIndex, null);
 					if (ws != null) {
+						// Purging is used to set the next algorithm
 						boolean purge = ws.purgeSS(currTime);
 						if (purge && !isWarmedUp) {
 							if (--this.ssUntilPurges == 0) {

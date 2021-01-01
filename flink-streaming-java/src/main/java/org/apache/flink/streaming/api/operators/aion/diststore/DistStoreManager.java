@@ -41,7 +41,7 @@ public class DistStoreManager {
 	}
 
 	public WindowDistStore createWindowDistStore(WindowSSlack windowSSlack) {
-		WindowDistStore windowStore = new WindowDistStore(windowSSlack, this, sSlackManager.getSSSize());
+		WindowDistStore windowStore = new WindowDistStore(windowSSlack, this, sSlackManager.getNumberOfSSPerWindow());
 		distStoreByWindow.put(windowSSlack, windowStore);
 		return windowStore;
 	}

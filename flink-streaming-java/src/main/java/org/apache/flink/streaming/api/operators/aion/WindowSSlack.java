@@ -39,8 +39,8 @@ public class WindowSSlack {
 		this.netDelayStore = sSlackManager.getNetDelayStoreManager().createWindowDistStore(this);
 		this.genDelayStore = sSlackManager.getInterEventStoreManager().createWindowDistStore(this);
 
-		this.sampledEvents = new long[sSlackManager.getSSSize()];
-		this.shedEvents = new long[sSlackManager.getSSSize()];
+		this.sampledEvents = new long[sSlackManager.getNumberOfSSPerWindow()];
+		this.shedEvents = new long[sSlackManager.getNumberOfSSPerWindow()];
 
 		this.eventsPerSSHisto = new DescriptiveStatisticsHistogram(STATS_SIZE);
 		this.samplingRatePerSSHisto = new DescriptiveStatisticsHistogram(STATS_SIZE);
@@ -134,30 +134,8 @@ public class WindowSSlack {
 		return netDelayStore.isPurged(localSSIndex);
 	}
 
-	private long getObservedEvents() {
-		long sum = 0;
-		for (int i = 0; i < sSlackManager.getSSSize(); i++) {
-			sum += getObservedEvents(i);
-		}
-		return sum;
-	}
-
-	private long getSampledEvents() {
-		long sum = 0;
-		for (int i = 0; i < sSlackManager.getSSSize(); i++) {
-			sum += getSampledEvents(i);
-		}
-		return sum;
-	}
-
 	private long getSampledEvents(int localSSIndex) {
 		return sampledEvents[localSSIndex];
-	}
-
-	private double getSamplingRate() {
-		long observedEvents = getObservedEvents();
-		long sampledEvents = getSampledEvents();
-		return (sampledEvents * 1.0) / (observedEvents * 1.0);
 	}
 
 	public double getSamplingRate(int localSSIndex) {

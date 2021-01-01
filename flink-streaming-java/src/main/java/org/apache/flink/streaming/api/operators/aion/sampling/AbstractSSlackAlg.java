@@ -52,7 +52,7 @@ public abstract class AbstractSSlackAlg {
 
 	public void initWindow(WindowSSlack windowSSlack) {
 		SamplingPlan samplingPlan =
-				new SamplingPlan(windowSSlack, windowSSlackManager.getSSSize());
+				new SamplingPlan(windowSSlack, windowSSlackManager.getNumberOfSSPerWindow());
 		samplingPlanMap.put(windowSSlack, samplingPlan);
 
 		if (windowSSlackManager.isWarmedUp()) {
@@ -108,7 +108,7 @@ public abstract class AbstractSSlackAlg {
 		long lastWatermark = windowSSlackManager.getLastEmittedWatermark();
 		WindowSSlack currWindow = windowSSlackManager.getWindowSlack(lastWatermark);
 		for(int localSSIndex = currWindow.getSSLocalIndex(lastWatermark);
-			localSSIndex < windowSSlackManager.getSSSize();
+			localSSIndex < windowSSlackManager.getNumberOfSSPerWindow();
 			localSSIndex++) {
 			long watermarkTarget = windowSSlackManager.getSSDeadline(currWindow.getWindowIndex(), localSSIndex);
 			// We found the unprocessed sub-stream
