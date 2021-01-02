@@ -13,17 +13,21 @@ public class GenDelaySSStore implements SSDistStore {
 	private final long ssIndex;
 
 	private final PriorityQueue<Long> eventsQueue;
+	private double totalGenDelay;
 	private double mean;
 	private double sd;
+	private double totalGenDelaySquared;
 	private long count;
 	private boolean isPurged;
 
 	GenDelaySSStore(final WindowDistStore windowDistStore, final long ssIndex) {
 		this.windowDistStore = windowDistStore;
 		this.ssIndex = ssIndex;
+		this.totalGenDelay = 0;
 		this.mean = 0;
 		this.sd = 0;
 		this.count = 0;
+		this.totalGenDelaySquared = 0;
 		this.isPurged = false;
 		this.eventsQueue = new PriorityQueue<>();
 	}
@@ -69,15 +73,17 @@ public class GenDelaySSStore implements SSDistStore {
 		while (!eventsQueue.isEmpty()) {
 			long currTs = eventsQueue.poll();
 			long genDelay = currTs - lastTs;
+			totalGenDelay += genDelay;
 			mean += genDelay;
 			sd += (genDelay * genDelay);
+			totalGenDelaySquared += (genDelay * genDelay);
 			count++;
 
 			lastTs = currTs;
 		}
 
 		if (this.count > 0) {
-			this.mean /= count;
+			this.mean = totalGenDelay / count;
 			this.sd = (this.sd / this.count) - (this.mean * this.mean);
 		}
 		LOG.info("Purging SS {}.{}: (mu={}, sd={}, count={})", getWindowIndex(), ssIndex, mean, sd, count);
