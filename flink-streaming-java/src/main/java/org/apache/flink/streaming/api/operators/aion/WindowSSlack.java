@@ -75,13 +75,14 @@ public class WindowSSlack {
 		if (sSlackManager.getsSlackAlg().sample(this, localSSIndex, eventTime)) {
 			sampledEvents[localSSIndex]++;
 			return true;
+		}else{
+			shedEvents[localSSIndex]++;
+			return false;
 		}
-		shedEvents[localSSIndex]++;
-		return false;
 	}
 
 	/*
-	 * Public interface that determines to sample the tuple or not.
+	 * Public interface that determines to emit watermark or not.
 	 *
 	 * @returns a boolean value that determines if the tuple to be included in the sample.
 	 */
@@ -127,6 +128,11 @@ public class WindowSSlack {
 
 	public long getWindowIndex() {
 		return windowIndex;
+	}
+
+	public boolean isStraggler(int localSSIndex){
+		return sSlackManager.getLastEmittedWatermark() >=
+			sSlackManager.getSSDeadline(this.getWindowIndex(), localSSIndex);
 	}
 
 	/* Manipulation functions for book-keept data */
