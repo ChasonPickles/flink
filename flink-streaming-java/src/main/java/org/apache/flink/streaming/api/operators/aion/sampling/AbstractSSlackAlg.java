@@ -83,6 +83,7 @@ public abstract class AbstractSSlackAlg {
 		updatePlan(windowSSlack);
 	}
 
+
 	public boolean sample(WindowSSlack windowSSlack, int localSSIndex, long eventTime) {
 		// Avoid sampling when warm-up is not done!
 		if (!windowSSlackManager.isWarmedUp()) {
@@ -91,13 +92,15 @@ public abstract class AbstractSSlackAlg {
 		// Watermark already emitted
 		if (windowSSlackManager.getLastEmittedWatermark() >=
 				windowSSlackManager.getSSDeadline(windowSSlack.getWindowIndex(), localSSIndex)) {
+
 			if (windowSSlack.isPurged(localSSIndex)) {
-				LOG.warn("Attempting to add data to a purged window.");
+				LOG.warn("Received event for purged window.");
 			}
 			return false;
 		}
 		return random.nextDouble() <= samplingPlanMap.get(windowSSlack).getSamplingRate(localSSIndex);
 	}
+
 
 	public final long emitWatermark() {
 		// Avoid sampling when warm-up is not done!
