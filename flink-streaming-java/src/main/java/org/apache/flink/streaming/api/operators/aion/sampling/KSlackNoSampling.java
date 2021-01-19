@@ -32,7 +32,7 @@ public class KSlackNoSampling extends AbstractSSlackAlg {
 		if (windowSSlackManager.getLastEmittedWatermark() >=
 				windowSSlackManager.getSSDeadline(windowSSlack.getWindowIndex(), localSSIndex)) {
 			if (windowSSlack.isPurged(localSSIndex)) {
-				LOG.warn("Attempting to add data to a purged window.");
+				LOG.warn("Received event for purged window.");
 			}
 			return false;
 		}
