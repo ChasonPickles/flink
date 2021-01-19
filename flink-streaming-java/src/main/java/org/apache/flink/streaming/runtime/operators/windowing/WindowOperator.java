@@ -51,6 +51,8 @@ import org.apache.flink.runtime.state.VoidNamespaceSerializer;
 import org.apache.flink.runtime.state.internal.InternalAppendingState;
 import org.apache.flink.runtime.state.internal.InternalListState;
 import org.apache.flink.runtime.state.internal.InternalMergingState;
+
+
 import org.apache.flink.streaming.api.operators.AbstractUdfStreamOperator;
 import org.apache.flink.streaming.api.operators.ChainingStrategy;
 import org.apache.flink.streaming.api.operators.InternalTimer;
@@ -68,8 +70,15 @@ import org.apache.flink.streaming.runtime.operators.windowing.functions.Internal
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.util.OutputTag;
 
+import org.json.*;
+import org.apache.kafka.clients.producer.KafkaProducer;
+import org.apache.kafka.clients.producer.Producer;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.serialization.ByteArraySerializer;
+
 import java.io.Serializable;
 import java.util.Collection;
+import java.util.Properties;
 
 import static org.apache.flink.util.Preconditions.checkArgument;
 import static org.apache.flink.util.Preconditions.checkNotNull;
@@ -173,6 +182,12 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
 	// ------------------------------------------------------------------------
 
 	protected transient InternalTimerService<W> internalTimerService;
+
+
+	//Add Kafka producer topic that sends late events to Kafka topic specified by TOPIC
+	// we do not define KafkaProducer here since members of this class are apparently required to be
+	// serializable. KafkaProducer retrieved by the getKafkaProducer method
+	String KAFKA_TOPIC = "stragglers-2";
 
 	/**
 	 * Creates a new {@code WindowOperator} based on the given policies and user functions.
@@ -401,6 +416,7 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
 					if (contents == null) {
 						continue;
 					}
+
 					emitWindowContents(window, contents);
 				}
 
@@ -416,6 +432,14 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
 		// late arriving tag has been set
 		// windowAssigner is event time and current timestamp + allowed lateness no less than element timestamp
 		if (isSkippedElement && isElementLate(element)) {
+			Producer<byte[], byte[]> kafkaProducer = getKafkaProducer();
+
+			JSONObject jo = new JSONObject();
+			jo.put(element.toString(), element.toString());
+			String jsonText = jo.toString();
+			System.out.println("Skipped Element : " + jsonText);
+			kafkaProducer.send(new ProducerRecord<>(KAFKA_TOPIC, jsonText.getBytes(), jsonText.getBytes()));
+
 			if (lateDataOutputTag != null){
 				sideOutput(element);
 			} else {
@@ -452,11 +476,21 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
 		if (triggerResult.isFire()) {
 			ACC contents = windowState.get();
 			if (contents != null) {
+				Producer<byte[], byte[]> kafkaProducer = getKafkaProducer();
+				JSONObject jo = new JSONObject();
+				jo.put("WindowFired", timer.getNamespace().toString());
+				String jsonText = jo.toString();
+
+				System.out.println("OnEventTime Firing Window Namespace: " + timer.getNamespace().toString());
+				System.out.println("OnEventTime Firing Window Key: " + timer.getKey().toString());
+				kafkaProducer.send(new ProducerRecord<>(KAFKA_TOPIC, jsonText.getBytes(), jsonText.getBytes()));
+
 				emitWindowContents(triggerContext.window, contents);
 			}
 		}
 
 		if (triggerResult.isPurge()) {
+			//TODO potentially add code here to retrieve number of stragglers
 			windowState.clear();
 		}
 
@@ -774,6 +808,18 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
 			output.collect(outputTag, new StreamRecord<>(value, window.maxTimestamp()));
 		}
 	}
+
+	private Producer<byte[], byte[]> getKafkaProducer(){
+		Properties props = new Properties();
+		props.put("bootstrap.servers", "localhost:9092");
+
+		Producer<byte[], byte[]> kafkaProducer = new KafkaProducer<>(props,
+			new ByteArraySerializer(),
+			new ByteArraySerializer());
+
+		return kafkaProducer;
+	}
+
 
 	/**
 	 * {@code Context} is a utility for handling {@code Trigger} invocations. It can be reused
