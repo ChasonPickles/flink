@@ -96,6 +96,7 @@ public class StreamSource<OUT, SRC extends SourceFunction<OUT>> extends Abstract
 			watermarkInterval,
 			-1);
 
+		System.out.println("Starting Process at " + processingTimeService.getCurrentProcessingTime());
 		try {
 			userFunction.run(ctx);
 
@@ -119,6 +120,7 @@ public class StreamSource<OUT, SRC extends SourceFunction<OUT>> extends Abstract
 
 	public void advanceToEndOfEventTime() {
 		if (!hasSentMaxWatermark) {
+			System.out.println("Sending Max Watermark of" + Watermark.MAX_WATERMARK);
 			ctx.emitWatermark(Watermark.MAX_WATERMARK);
 			hasSentMaxWatermark = true;
 		}

@@ -4,6 +4,8 @@ import org.apache.flink.metrics.Histogram;
 import org.apache.flink.runtime.metrics.DescriptiveStatisticsHistogram;
 import org.apache.flink.streaming.api.operators.aion.diststore.WindowDistStore;
 
+import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -17,6 +19,8 @@ public class WindowSSlack {
 	/* Identifiers for WindowSS */
 	private final long windowIndex;
 	private final WindowSSlackManager sSlackManager;
+	private final long startOfWindowTime;
+	private final long windowEndTime;
 
 	/* Stores */
 	private final WindowDistStore netDelayStore;
@@ -32,7 +36,9 @@ public class WindowSSlack {
 	WindowSSlack(
 			/* Identifiers */
 			final WindowSSlackManager sSlackManager,
-			final long windowIndex) {
+			final long windowIndex,
+			final long eventTime,
+			final long windowSize) {
 		this.windowIndex = windowIndex;
 		this.sSlackManager = sSlackManager;
 
@@ -41,6 +47,9 @@ public class WindowSSlack {
 
 		this.sampledEvents = new long[sSlackManager.getNumberOfSSPerWindow()];
 		this.shedEvents = new long[sSlackManager.getNumberOfSSPerWindow()];
+
+		startOfWindowTime = TimeWindow.getWindowStartWithOffset(eventTime, 0, windowSize);
+		windowEndTime = startOfWindowTime + windowSize;
 
 		this.eventsPerSSHisto = new DescriptiveStatisticsHistogram(STATS_SIZE);
 		this.samplingRatePerSSHisto = new DescriptiveStatisticsHistogram(STATS_SIZE);
@@ -86,12 +95,18 @@ public class WindowSSlack {
 	 *
 	 * @returns a boolean value that determines if the tuple to be included in the sample.
 	 */
-	public long emitWatermark() {
-		long watTime = sSlackManager.getsSlackAlg().emitWatermark();
-		if (watTime != -1) {
-			sSlackManager.recordWatermark(watTime);
+	public long emitWatermark(long timestamp) {
+		if (timestamp > startOfWindowTime) {
+			return startOfWindowTime;
 		}
-		return watTime;
+		else {
+			return -1;
+		}
+		//long watTime = sSlackManager.getsSlackAlg().emitWatermark();
+		//if (watTime != -1) {
+		//	sSlackManager.recordWatermark(watTime);
+		//}
+		//return watTime;
 	}
 
 	boolean purgeSS(long maxPurgeTime) {
@@ -130,6 +145,9 @@ public class WindowSSlack {
 		return windowIndex;
 	}
 
+	public long getWindowDeadline() {
+		return windowEndTime;
+	}
 	public boolean isStraggler(int localSSIndex){
 		return sSlackManager.getLastEmittedWatermark() >=
 			sSlackManager.getSSDeadline(this.getWindowIndex(), localSSIndex);

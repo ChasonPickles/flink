@@ -63,8 +63,10 @@ import org.apache.flink.streaming.api.operators.Triggerable;
 import org.apache.flink.streaming.api.windowing.assigners.BaseAlignedWindowAssigner;
 import org.apache.flink.streaming.api.windowing.assigners.MergingWindowAssigner;
 import org.apache.flink.streaming.api.windowing.assigners.WindowAssigner;
+import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.streaming.api.windowing.triggers.Trigger;
 import org.apache.flink.streaming.api.windowing.triggers.TriggerResult;
+import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.streaming.api.windowing.windows.Window;
 import org.apache.flink.streaming.runtime.operators.windowing.functions.InternalWindowFunction;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
@@ -417,7 +419,19 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
 						continue;
 					}
 
+					Producer<byte[], byte[]> kafkaProducer = getKafkaProducer();
+					JSONObject jo = new JSONObject();
+					jo.put("WindowFired", window.toString());
+					String jsonText = jo.toString();
+
+					System.out.println("OnEventTime Firing Window Namespace: " + timer.getNamespace().toString());
+					System.out.println("OnEventTime Firing Window Key: " + timer.getKey().toString());
+					kafkaProducer.send(new ProducerRecord<>(KAFKA_TOPIC, jsonText.getBytes(), jsonText.getBytes()));
+
 					emitWindowContents(window, contents);
+					System.out.println("Emitting Window at " + element.getTimestamp());
+					long start = TimeWindow.getWindowStartWithOffset(window.maxTimestamp(), 0 ,
+						Time.seconds(3).toMilliseconds());
 				}
 
 				if (triggerResult.isPurge()) {

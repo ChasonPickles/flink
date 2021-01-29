@@ -9,6 +9,7 @@ import org.apache.flink.streaming.api.operators.aion.diststore.DistStoreManager;
 import org.apache.flink.streaming.api.operators.aion.estimators.WindowSizeEstimator;
 import org.apache.flink.streaming.api.operators.aion.sampling.AbstractSSlackAlg;
 import org.apache.flink.streaming.api.operators.aion.sampling.KSlackNoSampling;
+import org.apache.flink.streaming.api.operators.aion.sampling.NaiveSSlackAlg;
 import org.apache.flink.streaming.runtime.tasks.ProcessingTimeService;
 
 import org.slf4j.Logger;
@@ -56,7 +57,7 @@ public final class WindowSSlackManager {
 	private final Histogram watDelays;
 	private boolean isPrintingStats;
 	/* Stats purger */
-	private final Thread timestampsPurger;
+	//private final Thread timestampsPurger;
 	private boolean isWarmedUp;
 
 	public WindowSSlackManager(
@@ -76,13 +77,14 @@ public final class WindowSSlackManager {
 		WindowSizeEstimator srEstimator =
 			new WindowSizeEstimator(this, netDelayStoreManager, interEventStoreManager);
 		this.sSlackAlg = new KSlackNoSampling(this, srEstimator);
+		//this.sSlackAlg = new NaiveSSlackAlg(this, srEstimator);
 
 		this.windowSlacksMap = new HashMap<>();
 
 		/* Purging */
 		this.isWarmedUp = false;
-		this.timestampsPurger = new Thread(new SSStatsPurger(processingTimeService.getCurrentProcessingTime()));
-		this.timestampsPurger.start();
+		//this.timestampsPurger = new Thread(new SSStatsPurger(processingTimeService.getCurrentProcessingTime()));
+		//this.timestampsPurger.start();
 		/* Metrics */
 		this.windowsCounter = new SimpleCounter();
 		this.watEmissionTimes = new PriorityQueue<>();
@@ -139,7 +141,9 @@ public final class WindowSSlackManager {
 		if (ws == null) {
 			ws = new WindowSSlack(
 				this,
-				windowIndex);
+				windowIndex,
+				eventTime,
+				windowLength);
 			windowSlacksMap.put(windowIndex, ws);
 			sSlackAlg.initWindow(ws);
 			// Remove from history
@@ -162,7 +166,8 @@ public final class WindowSSlackManager {
 	}
 
 	public long getWindowDeadline(long windowIndex) {
-		return (windowIndex + 1) * windowLength;
+		 WindowSSlack ws =  windowSlacksMap.get(windowIndex);
+		 return ws.getWindowDeadline();
 	}
 
 	public long getSSDeadline(long windowIndex, long ssIndex) {
@@ -263,7 +268,7 @@ public final class WindowSSlackManager {
 
 		SSStatsPurger(long currTime) {
 			this.currTime = currTime;
-			this.ssUntilPurges = HISTORY_SIZE / 2;
+			this.ssUntilPurges = HISTORY_SIZE / 16;
 		}
 
 		@Override
