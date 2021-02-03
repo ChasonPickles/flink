@@ -11,3 +11,5 @@ sudo mvn -T 1C install -Dcheckstyle.skip -Drat.skip=true -DskipTests -Dfast -Dma
 cd "$HOME/flink" || exit
 
 sudo mvn -T 1C install -Dcheckstyle.skip -Drat.skip=true -DskipTests -Dfast -Dmaven.javadoc.skip=true -N
+
+cp -r build-target/* ~/flink-binary
