@@ -189,7 +189,8 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
 	//Add Kafka producer topic that sends late events to Kafka topic specified by TOPIC
 	// we do not define KafkaProducer here since members of this class are apparently required to be
 	// serializable. KafkaProducer retrieved by the getKafkaProducer method
-	String KAFKA_TOPIC = "stragglers-2";
+	String KAFKA_TOPIC = "stragglers";
+	String KAFKA_TOPIC_2 = "stragglers-2";
 
 	/**
 	 * Creates a new {@code WindowOperator} based on the given policies and user functions.
@@ -424,9 +425,8 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
 					jo.put("WindowFired", window.toString());
 					String jsonText = jo.toString();
 
-					System.out.println("OnEventTime Firing Window Namespace: " + timer.getNamespace().toString());
-					System.out.println("OnEventTime Firing Window Key: " + timer.getKey().toString());
-					kafkaProducer.send(new ProducerRecord<>(KAFKA_TOPIC, jsonText.getBytes(), jsonText.getBytes()));
+					System.out.println("OnEventTime Firing Window Namespace: " + window.toString());
+					kafkaProducer.send(new ProducerRecord<>(KAFKA_TOPIC_2, jsonText.getBytes(), jsonText.getBytes()));
 
 					emitWindowContents(window, contents);
 					System.out.println("Emitting Window at " + element.getTimestamp());
@@ -452,7 +452,7 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
 			jo.put(element.toString(), element.toString());
 			String jsonText = jo.toString();
 			System.out.println("Skipped Element : " + jsonText);
-			kafkaProducer.send(new ProducerRecord<>(KAFKA_TOPIC, jsonText.getBytes(), jsonText.getBytes()));
+			kafkaProducer.send(new ProducerRecord<>(KAFKA_TOPIC_2, jsonText.getBytes(), jsonText.getBytes()));
 
 			if (lateDataOutputTag != null){
 				sideOutput(element);
@@ -497,7 +497,7 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
 
 				System.out.println("OnEventTime Firing Window Namespace: " + timer.getNamespace().toString());
 				System.out.println("OnEventTime Firing Window Key: " + timer.getKey().toString());
-				kafkaProducer.send(new ProducerRecord<>(KAFKA_TOPIC, jsonText.getBytes(), jsonText.getBytes()));
+				kafkaProducer.send(new ProducerRecord<>(KAFKA_TOPIC_2, jsonText.getBytes(), jsonText.getBytes()));
 
 				emitWindowContents(triggerContext.window, contents);
 			}
