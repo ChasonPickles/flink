@@ -370,7 +370,6 @@ public class StreamSourceContexts {
 
 		@Override
 		protected void processAndCollectWithTimestamp(T element, long timestamp) {
-
 			WindowSSlack window = windowSSlackManager.getWindowSlack(timestamp);
 
 			// Send training_count number of events to kafka to ensure a good sample for training
@@ -383,10 +382,7 @@ public class StreamSourceContexts {
 				kafkaProducer.send(new ProducerRecord<>(KAFKA_TOPIC, element.toString().getBytes(), element.toString().getBytes()));
 			}
 			JSONObject jo_2 = new JSONObject(element.toString());
-			if(jo_2.get("user_id") == "-"){
-				System.out.println("Found fake data");
-				fake_events_found_watermark += 1;
-			}
+			window.processEvent(jo_2, timestamp);
 
 
 			/* ******
@@ -438,7 +434,6 @@ public class StreamSourceContexts {
 		@Override
 		public void close() {
 			super.close();
-			System.out.println("CLOSING STREAMSOURCECONTEXT");
 			windowSSlackManager.printStats();
 		}
 

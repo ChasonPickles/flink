@@ -6,6 +6,7 @@ import org.apache.flink.streaming.api.operators.aion.diststore.WindowDistStore;
 
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 
+import org.json.JSONObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -16,11 +17,16 @@ public class WindowSSlack {
 
 	protected static final Logger LOG = LoggerFactory.getLogger(WindowSSlack.class);
 
+	/* Tracking real value of Window */
+	public long total_real_view_events;
+	public long total_real_events;
+	public long fake_events_stragglers;
+
 	/* Identifiers for WindowSS */
 	private final long windowIndex;
 	private final WindowSSlackManager sSlackManager;
-	private final long startOfWindowTime;
-	private final long windowEndTime;
+	public final long startOfWindowTime;
+	public final long windowEndTime;
 
 	/* Stores */
 	private final WindowDistStore netDelayStore;
@@ -168,6 +174,22 @@ public class WindowSSlack {
 
 	public long getObservedEvents(int localSSIndex) {
 		return sampledEvents[localSSIndex] + shedEvents[localSSIndex];
+	}
+
+	public void processEvent(JSONObject jsonEvent, long timestamp) {
+		//jsonEvent.get("")
+		if (!jsonEvent.has("fake")){
+			total_real_events += 1;
+			if (jsonEvent.get("event_type").equals("view")){
+				total_real_view_events += 1;
+			}
+		}else{
+			System.out.println("Found fake event");
+			System.out.println(jsonEvent);
+			if(isStraggler(getSSLocalIndex(windowEndTime-1))) {
+				fake_events_stragglers += 1;
+			}
+		}
 	}
 
 	/* Metrics */
