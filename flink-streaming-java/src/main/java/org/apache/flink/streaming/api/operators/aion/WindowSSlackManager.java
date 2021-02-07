@@ -2,14 +2,12 @@ package org.apache.flink.streaming.api.operators.aion;
 
 import org.apache.flink.metrics.Counter;
 import org.apache.flink.metrics.Histogram;
-import org.apache.flink.metrics.HistogramStatistics;
 import org.apache.flink.metrics.SimpleCounter;
 import org.apache.flink.runtime.metrics.DescriptiveStatisticsHistogram;
 import org.apache.flink.streaming.api.operators.aion.diststore.DistStoreManager;
 import org.apache.flink.streaming.api.operators.aion.estimators.WindowSizeEstimator;
 import org.apache.flink.streaming.api.operators.aion.sampling.AbstractSSlackAlg;
 import org.apache.flink.streaming.api.operators.aion.sampling.KSlackNoSampling;
-import org.apache.flink.streaming.api.operators.aion.sampling.NaiveSSlackAlg;
 import org.apache.flink.streaming.runtime.tasks.ProcessingTimeService;
 
 import org.slf4j.Logger;
@@ -187,13 +185,15 @@ public final class WindowSSlackManager {
 		this.isPrintingStats = true;
 		StringBuilder sb = new StringBuilder();
 		// This is gonna be a length function.
-		sb.append("Number of Windows observed:\t").append(windowsCounter.getCount()).append("\n");
-		sb.append("===\n");
+		//sb.append("Number of Windows observed:\t").append(windowsCounter.getCount()).append("\n");
+		//sb.append("===\n");
 
 		List<WindowSSlack> windows = new ArrayList<>(windowSlacksMap.values());
 		windows.sort((left, right) -> (int) (left.getWindowIndex() - right.getWindowIndex()));
 
+		ArrayList<Long> results = new ArrayList<>();
 		for (WindowSSlack window : windows) {
+			/*
 			HistogramStatistics numOfEvents = window.getEventsPerSSHisto().getStatistics();
 			HistogramStatistics sr = window.getSamplingRatePerSSHisto().getStatistics();
 
@@ -207,9 +207,22 @@ public final class WindowSSlackManager {
 				.append(sr.getMean()).append("\t")
 				.append(sr.getStdDev()).append("\n");
 			sb.append("===\n");
+			 */
+			sb.append("Start Time:\t").append(window.startOfWindowTime).append("\n");
+			sb.append("Events Processed\t").append(window.total_real_events).append("\n");
+			sb.append("View Events\t").append(window.total_real_view_events).append("\n");
+			sb.append("Fake Events Stragglers\t").append(window.fake_events_stragglers).append("\n");
+			sb.append("=============").append("\n");
+			results.add(window.total_real_events);
+
 		}
+		for (Long l: results){
+			sb.append("(," + l + ")");
+		}
+		sb.append("=============").append("\n");
 		System.out.println(sb.toString());
 
+		/*
 		sb = new StringBuilder();
 
 		// Algorithm
@@ -257,6 +270,7 @@ public final class WindowSSlackManager {
 			.append(interEventDelay.getStdDev()).append("\n");
 		sb.append("===\n");
 		System.out.println(sb.toString());
+		 */
 	}
 
 
