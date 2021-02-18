@@ -18,9 +18,8 @@
 package org.apache.flink.streaming.api.operators;
 
 // kafka
-import org.apache.flink.metrics.Counter;
 
-import org.apache.flink.metrics.SimpleCounter;
+import org.apache.flink.streaming.api.operators.aion.diststore.NumStragglersSSStore;
 
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.Producer;
@@ -48,6 +47,8 @@ import org.slf4j.LoggerFactory;
 import java.util.Properties;
 import java.util.concurrent.ScheduledFuture;
 
+import static java.lang.Math.max;
+
 /**
  * Source contexts for various stream time characteristics.
  */
@@ -56,7 +57,8 @@ public class StreamSourceContexts {
 	protected static final Logger LOG = LoggerFactory.getLogger(StreamSourceContexts.class);
 
 	private static final long WINDOW_LENGTH = 3000;
-	private static final long SS_LENGTH = 300;
+	private static final long SS_LENGTH = 600; // 600 milliseconds
+	private static final long MAX_NET_DELAY = 600;
 
 	/**
 	 * Depending on the {@link TimeCharacteristic}, this method will return the adequate
@@ -159,6 +161,240 @@ public class StreamSourceContexts {
 
 		@Override
 		public void close() {}
+	}
+
+	/**
+	 * {@link SourceFunction.SourceContext} to be used for sources with adaptive delays for
+	 * watermark emission.
+	 */
+	private static class AionWatermarkContext<T> extends WatermarkContext<T> {
+
+		private final Output<StreamRecord<T>> output;
+		private final StreamRecord<T> reuse;
+		private final long watermarkInterval;
+
+		private NumStragglersSSStore stragglerStore;
+
+		private final WindowSSlackManager windowSSlackManager;
+
+		private volatile ScheduledFuture<?> nextWatermarkTimer;
+		private volatile long nextWatermarkTime;
+		private volatile long lastWatermarkTime;
+		private long lastRecordTime;
+		//private SimpleCounter discardedEventsSinceLastWatermark;
+		private int stragglersSinceLastWatermark;
+		// We want to send a minimum of 1000 events to sdv every watermark to ensure it is training
+		// a new model frequently.
+		private int additionalEventsNeeded;
+
+		private final int SDV_TARGET = 700;
+
+		private int regEventsSentSinceLastWatermark;
+
+		// fake events processed since the last watermaark
+		private int fakeEventsSinceLastWatermark;
+		// we do not want to process too many fake events per watermark
+		private int max_fake_events;
+		private int fakeEventsProcessedSinceLastWatermark;
+
+		private final Producer<byte[], byte[]> kafkaProducer;
+		final String KAFKA_TOPIC = "stragglers";
+
+		private AionWatermarkContext(
+			final Output<StreamRecord<T>> output,
+			final ProcessingTimeService timeService,
+			final WindowSSlackManager windowSSlackManager,
+			final Object checkpointLock,
+			final long watermarkInterval,
+			final StreamStatusMaintainer streamStatusMaintainer,
+			final long idleTimeout) {
+			super(timeService, checkpointLock, streamStatusMaintainer, idleTimeout);
+
+
+			this.output = Preconditions.checkNotNull(output, "The output cannot be null.");
+			this.reuse = new StreamRecord<>(null);
+			this.windowSSlackManager = windowSSlackManager;
+			this.watermarkInterval = watermarkInterval;
+			this.lastWatermarkTime = Long.MIN_VALUE;
+			this.nextWatermarkTime = Long.MIN_VALUE;
+
+			Properties props = new Properties();
+			props.put("bootstrap.servers", "localhost:9092");
+
+			kafkaProducer = new KafkaProducer<>(props,
+				new ByteArraySerializer(),
+				new ByteArraySerializer());
+
+			System.out.println("Watermark Interval: " + watermarkInterval);
+
+			this.lastRecordTime = Long.MIN_VALUE;
+			stragglersSinceLastWatermark = 0;
+			regEventsSentSinceLastWatermark = 0;
+			fakeEventsSinceLastWatermark = 0;
+			additionalEventsNeeded = 0;
+			fakeEventsProcessedSinceLastWatermark = 0;
+			max_fake_events = 0;
+
+			long now = this.timeService.getCurrentProcessingTime();
+			stragglerStore = new NumStragglersSSStore(windowSSlackManager.getNumberOfSSPerWindow());
+		}
+
+		@Override
+		protected void processAndCollect(T element) {
+			throw new UnsupportedOperationException("Use processAndCollectWithTimestamp");
+		}
+
+		@Override
+		protected void processAndCollectWithTimestamp(T element, long timestamp) {
+			WindowSSlack window = windowSSlackManager.getWindowSlack(timestamp);
+
+			// Send training_count number of events to kafka to ensure a good sample for training
+			// fake_data model
+			JSONObject jo_2 = new JSONObject(element.toString());
+			long watTarget = -1;
+
+			//Do we collect this event?
+			if(jo_2.has("fake")){
+				timestamp = windowSSlackManager.getLastEmittedWatermark()+1;
+				fakeEventsSinceLastWatermark += 1;
+				if(fakeEventsSinceLastWatermark < max_fake_events){ // have we seen too many fake events?
+					fakeEventsProcessedSinceLastWatermark += 1;
+					output.collect(reuse.replace(element, timestamp));
+				}
+			}else{
+				window.processEvent(jo_2, timestamp);
+				lastRecordTime = timestamp; // just a regular event
+				watTarget = window.emitWatermark(lastRecordTime);
+				output.collect(reuse.replace(element, timestamp));
+
+				if (timestamp < lastWatermarkTime) {
+					stragglersSinceLastWatermark += 1;
+					kafkaProducer.send(new ProducerRecord<>(
+						KAFKA_TOPIC,
+						element.toString().getBytes(),
+						element.toString().getBytes()));
+				}
+				else if (regEventsSentSinceLastWatermark < additionalEventsNeeded
+					&& stragglersSinceLastWatermark + regEventsSentSinceLastWatermark < SDV_TARGET){
+					regEventsSentSinceLastWatermark += 1;
+					kafkaProducer.send(new ProducerRecord<>(
+						KAFKA_TOPIC,
+						element.toString().getBytes(),
+						element.toString().getBytes()));
+				}
+			}
+
+			// do we emit watermark
+			if (watTarget != -1 && watTarget > lastWatermarkTime) {
+				Watermark watermark = new Watermark(watTarget);
+				output.emitWatermark(watermark);
+				LOG.info("Emitted WT = " + watermark.toString());
+				LOG.info("NumStragglers: " + stragglersSinceLastWatermark);
+				lastWatermarkTime = watTarget;
+				windowSSlackManager.setLastEmittedWatermark(watTarget);
+
+				WindowSSlack windowSSlack = windowSSlackManager.getWindowFromIndex(window.getWindowIndex()-2);
+				int stragglers_window_minus_two = 0;
+				if (windowSSlack != null) {
+					stragglers_window_minus_two = windowSSlack.stragglers;
+					stragglerStore.addValue(stragglers_window_minus_two/windowSSlackManager.getNumberOfSSPerWindow());
+				}
+
+				max_fake_events = stragglerStore.getConservateEstimateForStragglers();
+				sendWatermarkToSDV(lastWatermarkTime, max_fake_events);
+
+				additionalEventsNeeded = max(0, SDV_TARGET - stragglersSinceLastWatermark);
+
+				// reset statistics
+				System.out.println("------------------------------------------");
+				System.out.println("StragglersWindowMinusTwo " + stragglers_window_minus_two/windowSSlackManager.getNumberOfSSPerWindow());
+				System.out.println("fakeEventsSinceLastWatermark " + fakeEventsSinceLastWatermark);
+				System.out.println("fakeEventsProcessedSinceLastWatermark " + fakeEventsProcessedSinceLastWatermark);
+				System.out.println("maxFakeEvents " + max_fake_events);
+				stragglersSinceLastWatermark = 0;
+				regEventsSentSinceLastWatermark = 0;
+				fakeEventsSinceLastWatermark = 0;
+				fakeEventsProcessedSinceLastWatermark = 0;
+			}
+
+		}
+
+		protected void sendWatermarkToSDV(long lastWatermarkTime, int eventsToSendBack) {
+			JSONObject jo_3 = new JSONObject();
+			jo_3.put("EventsDiscardedSinceLastWatermark", eventsToSendBack);
+			jo_3.put("lastWatermark", Long.toString(lastWatermarkTime+1));
+			String jsonText = jo_3.toString();
+			kafkaProducer.send(new ProducerRecord<>(KAFKA_TOPIC, jsonText.getBytes(), jsonText.getBytes()));
+		}
+
+		@Override
+		protected boolean allowWatermark(Watermark mark) {
+			// allow Long.MAX_VALUE since this is the special end-watermark that for example the Kafka source emits
+			return mark.getTimestamp() == Long.MAX_VALUE;
+		}
+
+		/**
+		 * This will only be called if allowWatermark returned {@code true}.
+		 */
+		@Override
+		protected void processAndEmitWatermark(Watermark mark) {
+			output.emitWatermark(mark);
+		}
+
+		@Override
+		public void close() {
+			super.close();
+			windowSSlackManager.printStats();
+		}
+
+
+		private class WatermarkEmittingTask implements ProcessingTimeCallback {
+
+			private final ProcessingTimeService timeService;
+			private final Object lock;
+			private final Output<StreamRecord<T>> output;
+
+			private WatermarkEmittingTask(
+				ProcessingTimeService timeService,
+				Object checkpointLock,
+				Output<StreamRecord<T>> output) {
+				this.timeService = timeService;
+				this.lock = checkpointLock;
+				this.output = output;
+			}
+
+			@Override
+			public void onProcessingTime(long timestamp) {
+				final long currentTime = timeService.getCurrentProcessingTime();
+
+				synchronized (lock) {
+					// we should continue to automatically emit watermarks if we are active
+					if (streamStatusMaintainer.getStreamStatus().isActive()) {
+						if (idleTimeout != -1 && currentTime - lastRecordTime > idleTimeout) {
+							// if we are configured to detect idleness, piggy-back the idle detection check on the
+							// watermark interval, so that we may possibly discover idle sources faster before waiting
+							// for the next idle check to fire
+							markAsTemporarilyIdle();
+
+							// no need to finish the next check, as we are now idle.
+							cancelNextIdleDetectionTask();
+						} else if (currentTime > nextWatermarkTime) {
+							// align the watermarks across all machines. this will ensure that we
+							// don't have watermarks that creep along at different intervals because
+							// the machine clocks are out of sync
+							final long watermarkTime = currentTime - (currentTime % watermarkInterval);
+
+							output.emitWatermark(new Watermark(watermarkTime));
+							nextWatermarkTime = watermarkTime + watermarkInterval;
+						}
+					}
+				}
+
+				long nextWatermark = currentTime + watermarkInterval;
+				nextWatermarkTimer = this.timeService.registerTimer(
+					nextWatermark, new WatermarkEmittingTask(this.timeService, lock, output));
+			}
+		}
 	}
 
 	/**
@@ -303,189 +539,6 @@ public class StreamSourceContexts {
 		}
 	}
 
-	/**
-	 * {@link SourceFunction.SourceContext} to be used for sources with adaptive delays for
-	 * watermark emission.
-	 */
-	private static class AionWatermarkContext<T> extends WatermarkContext<T> {
-
-		private final Output<StreamRecord<T>> output;
-		private final StreamRecord<T> reuse;
-		private final long watermarkInterval;
-
-		private final WindowSSlackManager windowSSlackManager;
-
-		private volatile ScheduledFuture<?> nextWatermarkTimer;
-		private volatile long nextWatermarkTime;
-		private volatile long lastWatermarkTime;
-		private long lastRecordTime;
-		//private SimpleCounter discardedEventsSinceLastWatermark;
-		private int discardedEventsSinceLastWatermark_2;
-		private int additional_events_needed;
-		private int straggler_channel_count;
-		private int fake_events_found_watermark;
-
-		private final Producer<byte[], byte[]> kafkaProducer;
-		final String KAFKA_TOPIC = "stragglers";
-		final int training_count = 1000;
-
-		private AionWatermarkContext(
-				final Output<StreamRecord<T>> output,
-				final ProcessingTimeService timeService,
-				final WindowSSlackManager windowSSlackManager,
-				final Object checkpointLock,
-				final long watermarkInterval,
-				final StreamStatusMaintainer streamStatusMaintainer,
-				final long idleTimeout) {
-			super(timeService, checkpointLock, streamStatusMaintainer, idleTimeout);
-
-
-			this.output = Preconditions.checkNotNull(output, "The output cannot be null.");
-			this.reuse = new StreamRecord<>(null);
-			this.windowSSlackManager = windowSSlackManager;
-			this.watermarkInterval = watermarkInterval;
-			this.lastWatermarkTime = Long.MIN_VALUE;
-			this.nextWatermarkTime = Long.MIN_VALUE;
-
-			Properties props = new Properties();
-			props.put("bootstrap.servers", "localhost:9092");
-
-			kafkaProducer = new KafkaProducer<>(props,
-					new ByteArraySerializer(),
-					new ByteArraySerializer());
-
-			this.lastRecordTime = Long.MIN_VALUE;
-			discardedEventsSinceLastWatermark_2 = 0;
-			straggler_channel_count = 0;
-			fake_events_found_watermark = 0;
-			additional_events_needed = 0;
-
-			long now = this.timeService.getCurrentProcessingTime();
-		}
-
-		@Override
-		protected void processAndCollect(T element) {
-			throw new UnsupportedOperationException("Use processAndCollectWithTimestamp");
-		}
-
-		@Override
-		protected void processAndCollectWithTimestamp(T element, long timestamp) {
-			WindowSSlack window = windowSSlackManager.getWindowSlack(timestamp);
-
-			// Send training_count number of events to kafka to ensure a good sample for training
-			// fake_data model
-			if (timestamp < lastWatermarkTime){
-				discardedEventsSinceLastWatermark_2 += 1;
-				kafkaProducer.send(new ProducerRecord<>(KAFKA_TOPIC, element.toString().getBytes(), element.toString().getBytes()));
-			}else if (straggler_channel_count < additional_events_needed){
-				straggler_channel_count += 1;
-				kafkaProducer.send(new ProducerRecord<>(KAFKA_TOPIC, element.toString().getBytes(), element.toString().getBytes()));
-			}
-			JSONObject jo_2 = new JSONObject(element.toString());
-			window.processEvent(jo_2, timestamp);
-
-
-			/* ******
-			if (window.sample(timestamp)) {
-				output.collect(reuse.replace(element, timestamp));
-			}
-			*/
-
-			lastRecordTime = timestamp;
-			output.collect(reuse.replace(element, timestamp));
-
-			long watTarget = window.emitWatermark(lastRecordTime);
-
-			if (watTarget != -1 && watTarget > lastWatermarkTime) {
-				Watermark watermark = new Watermark(watTarget);
-				output.emitWatermark(watermark);
-				lastWatermarkTime = watTarget;
-				windowSSlackManager.setLastEmittedWatermark(watTarget);
-
-				JSONObject jo_3 = new JSONObject();
-				jo_3.put("EventsDiscardedSinceLastWatermark", Long.toString(discardedEventsSinceLastWatermark_2));
-				jo_3.put("lastWatermark", Long.toString(lastWatermarkTime+1));
-				String jsonText = jo_3.toString();
-				kafkaProducer.send(new ProducerRecord<>(KAFKA_TOPIC, jsonText.getBytes(), jsonText.getBytes()));
-				System.out.println("Emitted WT = " + watermark.toString());
-				discardedEventsSinceLastWatermark_2 = 0;
-				additional_events_needed = 1000 - discardedEventsSinceLastWatermark_2;
-				straggler_channel_count = 0;
-				fake_events_found_watermark = 0;
-				LOG.info("Discarded Events: " + discardedEventsSinceLastWatermark_2 + " | Fake events: " + fake_events_found_watermark);
-			}
-
-		}
-
-		@Override
-		protected boolean allowWatermark(Watermark mark) {
-			// allow Long.MAX_VALUE since this is the special end-watermark that for example the Kafka source emits
-			return mark.getTimestamp() == Long.MAX_VALUE;
-		}
-
-		/**
-		 * This will only be called if allowWatermark returned {@code true}.
-		 */
-		@Override
-		protected void processAndEmitWatermark(Watermark mark) {
-			output.emitWatermark(mark);
-		}
-
-		@Override
-		public void close() {
-			super.close();
-			windowSSlackManager.printStats();
-		}
-
-
-		private class WatermarkEmittingTask implements ProcessingTimeCallback {
-
-			private final ProcessingTimeService timeService;
-			private final Object lock;
-			private final Output<StreamRecord<T>> output;
-
-			private WatermarkEmittingTask(
-				ProcessingTimeService timeService,
-				Object checkpointLock,
-				Output<StreamRecord<T>> output) {
-				this.timeService = timeService;
-				this.lock = checkpointLock;
-				this.output = output;
-			}
-
-			@Override
-			public void onProcessingTime(long timestamp) {
-				final long currentTime = timeService.getCurrentProcessingTime();
-
-				synchronized (lock) {
-					// we should continue to automatically emit watermarks if we are active
-					if (streamStatusMaintainer.getStreamStatus().isActive()) {
-						if (idleTimeout != -1 && currentTime - lastRecordTime > idleTimeout) {
-							// if we are configured to detect idleness, piggy-back the idle detection check on the
-							// watermark interval, so that we may possibly discover idle sources faster before waiting
-							// for the next idle check to fire
-							markAsTemporarilyIdle();
-
-							// no need to finish the next check, as we are now idle.
-							cancelNextIdleDetectionTask();
-						} else if (currentTime > nextWatermarkTime) {
-							// align the watermarks across all machines. this will ensure that we
-							// don't have watermarks that creep along at different intervals because
-							// the machine clocks are out of sync
-							final long watermarkTime = currentTime - (currentTime % watermarkInterval);
-
-							output.emitWatermark(new Watermark(watermarkTime));
-							nextWatermarkTime = watermarkTime + watermarkInterval;
-						}
-					}
-				}
-
-				long nextWatermark = currentTime + watermarkInterval;
-				nextWatermarkTimer = this.timeService.registerTimer(
-					nextWatermark, new WatermarkEmittingTask(this.timeService, lock, output));
-			}
-		}
-	}
 	/**
 	 * A SourceContext for event time. Sources may directly attach timestamps and generate
 	 * watermarks, but if records are emitted without timestamps, no timestamps are automatically
