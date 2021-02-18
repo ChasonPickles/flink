@@ -8,6 +8,7 @@ import org.apache.flink.streaming.api.operators.aion.diststore.DistStoreManager;
 import org.apache.flink.streaming.api.operators.aion.estimators.WindowSizeEstimator;
 import org.apache.flink.streaming.api.operators.aion.sampling.AbstractSSlackAlg;
 import org.apache.flink.streaming.api.operators.aion.sampling.KSlackNoSampling;
+import org.apache.flink.streaming.api.windowing.windows.Window;
 import org.apache.flink.streaming.runtime.tasks.ProcessingTimeService;
 
 import org.slf4j.Logger;
@@ -39,8 +40,8 @@ public final class WindowSSlackManager {
 	private final ProcessingTimeService processingTimeService;
 	private final AbstractSSlackAlg sSlackAlg;
 	/* Logical division of windows */
-	private final long windowLength;
-	private final long ssLength;
+	private final long windowLength; // in milliseconds
+	private final long ssLength; // in milliseconds
 	private final int numberSSPerWindow;
 	/* Watermarks. */
 	private long lastEmittedWatermark = Long.MIN_VALUE;
@@ -88,6 +89,7 @@ public final class WindowSSlackManager {
 		this.watEmissionTimes = new PriorityQueue<>();
 		this.watDelays = new DescriptiveStatisticsHistogram(STATS_SIZE);
 		this.isPrintingStats = false;
+
 	}
 
 	/* Getters & Setters */
@@ -116,7 +118,9 @@ public final class WindowSSlackManager {
 	}
 
 	public void setLastEmittedWatermark(long targetWatermark) {
-		lastEmittedWatermark = targetWatermark;
+		if (targetWatermark > lastEmittedWatermark){
+			lastEmittedWatermark = targetWatermark;
+		}
 	}
 
 	AbstractSSlackAlg getsSlackAlg() {
@@ -168,6 +172,10 @@ public final class WindowSSlackManager {
 		 return ws.getWindowDeadline();
 	}
 
+	public WindowSSlack getWindowFromIndex(long windowIndex) {
+		return windowSlacksMap.get(windowIndex);
+	}
+
 	public long getSSDeadline(long windowIndex, long ssIndex) {
 		return windowIndex * windowLength + (ssIndex + 1) * ssLength;
 	}
@@ -191,7 +199,7 @@ public final class WindowSSlackManager {
 		List<WindowSSlack> windows = new ArrayList<>(windowSlacksMap.values());
 		windows.sort((left, right) -> (int) (left.getWindowIndex() - right.getWindowIndex()));
 
-		ArrayList<Long> results = new ArrayList<>();
+		ArrayList<WindowSSlack> results = new ArrayList<>();
 		for (WindowSSlack window : windows) {
 			/*
 			HistogramStatistics numOfEvents = window.getEventsPerSSHisto().getStatistics();
@@ -211,15 +219,14 @@ public final class WindowSSlackManager {
 			sb.append("Start Time:\t").append(window.startOfWindowTime).append("\n");
 			sb.append("Events Processed\t").append(window.total_real_events).append("\n");
 			sb.append("View Events\t").append(window.total_real_view_events).append("\n");
-			sb.append("Fake Events Stragglers\t").append(window.fake_events_stragglers).append("\n");
 			sb.append("=============").append("\n");
-			results.add(window.total_real_events);
+			results.add(window);
 
 		}
-		for (Long l: results){
-			sb.append("(," + l + ")");
+		for (WindowSSlack w: results){
+			sb.append("(").append(w.getWindowIndex()).append(",")
+				.append(w.total_real_view_events).append(",").append(w.results).append(")\n");
 		}
-		sb.append("=============").append("\n");
 		System.out.println(sb.toString());
 
 		/*

@@ -20,7 +20,10 @@ public class WindowSSlack {
 	/* Tracking real value of Window */
 	public long total_real_view_events;
 	public long total_real_events;
+	public long total_fake_events;
 	public long fake_events_stragglers;
+	public int stragglers;
+	public long results;
 
 	/* Identifiers for WindowSS */
 	private final long windowIndex;
@@ -59,6 +62,7 @@ public class WindowSSlack {
 
 		this.eventsPerSSHisto = new DescriptiveStatisticsHistogram(STATS_SIZE);
 		this.samplingRatePerSSHisto = new DescriptiveStatisticsHistogram(STATS_SIZE);
+		stragglers = 0;
 	}
 
 	/*
@@ -102,12 +106,17 @@ public class WindowSSlack {
 	 * @returns a boolean value that determines if the tuple to be included in the sample.
 	 */
 	public long emitWatermark(long timestamp) {
+		long n = (timestamp - startOfWindowTime)/sSlackManager.getSSLength();
+		assert startOfWindowTime + n*sSlackManager.getSSLength() < timestamp;
+		return startOfWindowTime + n*sSlackManager.getSSLength() + 1;
+		/*
 		if (timestamp > startOfWindowTime) {
 			return startOfWindowTime;
 		}
 		else {
 			return -1;
 		}
+		 */
 		//long watTime = sSlackManager.getsSlackAlg().emitWatermark();
 		//if (watTime != -1) {
 		//	sSlackManager.recordWatermark(watTime);
@@ -177,17 +186,15 @@ public class WindowSSlack {
 	}
 
 	public void processEvent(JSONObject jsonEvent, long timestamp) {
-		//jsonEvent.get("")
 		if (!jsonEvent.has("fake")){
 			total_real_events += 1;
 			if (jsonEvent.get("event_type").equals("view")){
 				total_real_view_events += 1;
-			}
-		}else{
-			System.out.println("Found fake event");
-			System.out.println(jsonEvent);
-			if(isStraggler(getSSLocalIndex(windowEndTime-1))) {
-				fake_events_stragglers += 1;
+				if(timestamp < sSlackManager.getLastEmittedWatermark()){
+					stragglers += 1;
+				}else{
+					results += 1;
+				}
 			}
 		}
 	}
