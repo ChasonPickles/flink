@@ -103,10 +103,6 @@ public abstract class AbstractSSlackAlg {
 
 
 	public final long emitWatermark() {
-		// Avoid sampling when warm-up is not done!
-		if (!windowSSlackManager.isWarmedUp()) {
-			return -1;
-		}
 
 		long lastWatermark = windowSSlackManager.getLastEmittedWatermark();
 		WindowSSlack currWindow = windowSSlackManager.getWindowSlack(lastWatermark);
@@ -140,4 +136,5 @@ public abstract class AbstractSSlackAlg {
 	protected abstract void updatePlan(WindowSSlack windowSSlack);
 
 	protected abstract boolean satisfySubstreamTarget(WindowSSlack windowSSlack, int localSSIndex);
+
 }
