@@ -38,7 +38,8 @@ public class NaiveSSlackAlg extends AbstractSSlackAlg {
 	protected boolean satisfySubstreamTarget(WindowSSlack windowSSlack, int localSSIndex) {
 		SamplingPlan plan = samplingPlanMap.getOrDefault(windowSSlack, null);
 		long watermarkTarget = windowSSlackManager.getSSDeadline(windowSSlack.getWindowIndex(), localSSIndex);
-		return System.currentTimeMillis() >= watermarkTarget &&
+		return windowSSlackManager.getProcessingTimeService().getCurrentProcessingTime() >= watermarkTarget &&
 				plan.getObservedEvents(localSSIndex) <= windowSSlack.getObservedEvents(localSSIndex);
 	}
+
 }
