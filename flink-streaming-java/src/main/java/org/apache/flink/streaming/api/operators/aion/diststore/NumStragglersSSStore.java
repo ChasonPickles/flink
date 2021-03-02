@@ -11,18 +11,15 @@ public class NumStragglersSSStore {
 
 	private final PriorityQueue<Integer> eventsQueue;
 	private double totalStragglers;
-	private double mean;
-	private double sd;
 	private int count;
 	private int total;
+	private long total_squared;
 	private boolean isPurged;
 	private int numSubStreams = 0;
-	private final int QUEUE_SIZE = 64;
+	private int first_three = 3;
 
 
 	public NumStragglersSSStore(int numSubStreams) {
-		this.mean = 0;
-		this.sd = 0;
 		this.count = 0;
 		this.isPurged = false;
 		this.eventsQueue = new PriorityQueue<>();
@@ -31,17 +28,25 @@ public class NumStragglersSSStore {
 	}
 
 	public void addValue(int numStragglers){
-		if(numStragglers < 5){
+		if (first_three > 0){
+			first_three--;
 			return;
 		}
+		if(numStragglers < 6){
+			return;
+		}
+		System.out.println("Adding value " + numStragglers);
 		int head;
+		int QUEUE_SIZE = 64;
 		if (this.eventsQueue.size() > QUEUE_SIZE){
 			head = eventsQueue.poll();
 			total -= head;
+			total_squared -= (int) Math.pow(head, 2);
 			count -= 1;
 		}
 		eventsQueue.add(numStragglers);
 		total += numStragglers;
+		total_squared += (int) Math.pow(numStragglers, 2);
 		count += 1;
 	}
 
@@ -50,7 +55,7 @@ public class NumStragglersSSStore {
 	}
 
 	public double getSD(){
-		if(count < 2) {
+		if(count < 5) {
 			return 0;
 		}
 		int mean = getMean();
@@ -63,7 +68,7 @@ public class NumStragglersSSStore {
 	}
 
 	public int getConservateEstimateForStragglers(){
-		if(count < 2) {
+		if(count < 5) {
 			return 0;
 		}
 
