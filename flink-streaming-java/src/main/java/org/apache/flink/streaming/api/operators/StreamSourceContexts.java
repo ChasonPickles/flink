@@ -182,16 +182,16 @@ public class StreamSourceContexts {
 		private volatile long lastWatermarkTime;
 		private long lastRecordTime;
 		//private SimpleCounter discardedEventsSinceLastWatermark;
-		private int stragglersSinceLastWatermark;
+		private int stragglersSinceLastWindow;
 		// We want to send a minimum of 1000 events to sdv every watermark to ensure it is training
 		// a new model frequently.
 		private int additionalEventsNeeded;
 
-		private final int SDV_TARGET = 700;
+		private final int SDV_TARGET = 1000;
 
 		private int regEventsSentSinceLastWatermark;
 
-		// fake events processed since the last watermaark
+		// fake events processed since the last window
 		private int fakeEventsSinceLastWatermark;
 		// we do not want to process too many fake events per watermark
 		private int max_fake_events;
@@ -225,10 +225,9 @@ public class StreamSourceContexts {
 				new ByteArraySerializer(),
 				new ByteArraySerializer());
 
-			System.out.println("Watermark Interval: " + watermarkInterval);
 
 			this.lastRecordTime = Long.MIN_VALUE;
-			stragglersSinceLastWatermark = 0;
+			stragglersSinceLastWindow = 0;
 			regEventsSentSinceLastWatermark = 0;
 			fakeEventsSinceLastWatermark = 0;
 			additionalEventsNeeded = 0;
@@ -267,15 +266,15 @@ public class StreamSourceContexts {
 				watTarget = window.emitWatermark(lastRecordTime);
 				output.collect(reuse.replace(element, timestamp));
 
-				if (timestamp < lastWatermarkTime) {
-					stragglersSinceLastWatermark += 1;
+				if (timestamp < windowSSlackManager.getLastEmittedWindowWatermark()) {
+					stragglersSinceLastWindow += 1;
 					kafkaProducer.send(new ProducerRecord<>(
 						KAFKA_TOPIC,
 						element.toString().getBytes(),
 						element.toString().getBytes()));
 				}
 				else if (regEventsSentSinceLastWatermark < additionalEventsNeeded
-					&& stragglersSinceLastWatermark + regEventsSentSinceLastWatermark < SDV_TARGET){
+					&& stragglersSinceLastWindow + regEventsSentSinceLastWatermark < SDV_TARGET){
 					regEventsSentSinceLastWatermark += 1;
 					kafkaProducer.send(new ProducerRecord<>(
 						KAFKA_TOPIC,
@@ -288,33 +287,28 @@ public class StreamSourceContexts {
 			if (watTarget != -1 && watTarget > lastWatermarkTime) {
 				Watermark watermark = new Watermark(watTarget);
 				output.emitWatermark(watermark);
-				LOG.info("Emitted WT = " + watermark.toString());
-				LOG.info("NumStragglers: " + stragglersSinceLastWatermark);
 				lastWatermarkTime = watTarget;
-				windowSSlackManager.setLastEmittedWatermark(watTarget);
+				int newWindow = windowSSlackManager.setLastEmittedWatermark(watTarget);
 
-				WindowSSlack windowSSlack = windowSSlackManager.getWindowFromIndex(window.getWindowIndex()-2);
-				int stragglers_window_minus_two = 0;
-				if (windowSSlack != null) {
-					stragglers_window_minus_two = windowSSlack.stragglers;
-					stragglerStore.addValue(stragglers_window_minus_two/windowSSlackManager.getNumberOfSSPerWindow());
+				if (newWindow == 1){
+					max_fake_events = stragglerStore.getConservateEstimateForStragglers();
+					sendWatermarkToSDV(lastWatermarkTime, max_fake_events);
+
+					WindowSSlack windowSSlack = windowSSlackManager.getWindowFromIndex(window.getWindowIndex()-2);
+					if (windowSSlack != null) {
+						int stragglers_window_minus_two = windowSSlack.straggler_events;
+						stragglerStore.addValue(stragglers_window_minus_two);
+					}
+
+					additionalEventsNeeded = max(0, SDV_TARGET - stragglersSinceLastWindow);
+					// reset statistics
+					stragglersSinceLastWindow = 0;
+					regEventsSentSinceLastWatermark = 0;
+					fakeEventsSinceLastWatermark = 0;
+					fakeEventsProcessedSinceLastWatermark = 0;
 				}
 
-				max_fake_events = stragglerStore.getConservateEstimateForStragglers();
-				sendWatermarkToSDV(lastWatermarkTime, max_fake_events);
 
-				additionalEventsNeeded = max(0, SDV_TARGET - stragglersSinceLastWatermark);
-
-				// reset statistics
-				System.out.println("------------------------------------------");
-				System.out.println("StragglersWindowMinusTwo " + stragglers_window_minus_two/windowSSlackManager.getNumberOfSSPerWindow());
-				System.out.println("fakeEventsSinceLastWatermark " + fakeEventsSinceLastWatermark);
-				System.out.println("fakeEventsProcessedSinceLastWatermark " + fakeEventsProcessedSinceLastWatermark);
-				System.out.println("maxFakeEvents " + max_fake_events);
-				stragglersSinceLastWatermark = 0;
-				regEventsSentSinceLastWatermark = 0;
-				fakeEventsSinceLastWatermark = 0;
-				fakeEventsProcessedSinceLastWatermark = 0;
 			}
 
 		}
@@ -346,6 +340,7 @@ public class StreamSourceContexts {
 			super.close();
 			windowSSlackManager.printStats();
 		}
+
 
 
 		private class WatermarkEmittingTask implements ProcessingTimeCallback {

@@ -22,8 +22,8 @@ public class WindowSSlack {
 	public long total_real_events;
 	public long total_fake_events;
 	public long fake_events_stragglers;
-	public int stragglers;
-	public long results;
+	public int straggler_events;
+	public int results;
 
 	/* Identifiers for WindowSS */
 	private final long windowIndex;
@@ -41,6 +41,8 @@ public class WindowSSlack {
 	/* Metrics */
 	private final Histogram eventsPerSSHisto;
 	private final Histogram samplingRatePerSSHisto;
+
+	//BufferedWriter writer;
 
 	WindowSSlack(
 			/* Identifiers */
@@ -62,7 +64,7 @@ public class WindowSSlack {
 
 		this.eventsPerSSHisto = new DescriptiveStatisticsHistogram(STATS_SIZE);
 		this.samplingRatePerSSHisto = new DescriptiveStatisticsHistogram(STATS_SIZE);
-		stragglers = 0;
+		straggler_events = 0;
 	}
 
 	/*
@@ -107,8 +109,8 @@ public class WindowSSlack {
 	 */
 	public long emitWatermark(long timestamp) {
 		long n = (timestamp - startOfWindowTime)/sSlackManager.getSSLength();
-		assert startOfWindowTime + n*sSlackManager.getSSLength() < timestamp;
-		return startOfWindowTime + n*sSlackManager.getSSLength() + 1;
+		assert startOfWindowTime + n*sSlackManager.getSSLength() <= timestamp;
+		return startOfWindowTime + n*sSlackManager.getSSLength();
 		/*
 		if (timestamp > startOfWindowTime) {
 			return startOfWindowTime;
@@ -163,10 +165,6 @@ public class WindowSSlack {
 	public long getWindowDeadline() {
 		return windowEndTime;
 	}
-	public boolean isStraggler(int localSSIndex){
-		return sSlackManager.getLastEmittedWatermark() >=
-			sSlackManager.getSSDeadline(this.getWindowIndex(), localSSIndex);
-	}
 
 	/* Manipulation functions for book-keept data */
 	public boolean isPurged(int localSSIndex) {
@@ -190,9 +188,23 @@ public class WindowSSlack {
 			total_real_events += 1;
 			if (jsonEvent.get("event_type").equals("view")){
 				total_real_view_events += 1;
-				if(timestamp < sSlackManager.getLastEmittedWatermark()){
-					stragglers += 1;
-				}else{
+			}
+			if(timestamp < sSlackManager.getLastEmittedWindowWatermark()){
+				straggler_events++;
+				String uniqueId = jsonEvent.getString("uniqueId");
+				if (uniqueId != null) {
+					String s = "late," + uniqueId + "," + timestamp + "," + sSlackManager.getLastEmittedWatermark()
+						+ "," + sSlackManager.getLastEmittedWindowWatermark() + "," + (windowEndTime - 1) + "\n";
+					sSlackManager.writeToOutput(s);
+				}
+			}else{
+				String uniqueId = jsonEvent.getString("uniqueId");
+				if (uniqueId != null) {
+					String s = "time," + uniqueId + "," + timestamp + "," + sSlackManager.getLastEmittedWatermark() +
+						"," + sSlackManager.getLastEmittedWindowWatermark() + ", " + (windowEndTime - 1) + "\n";
+					sSlackManager.writeToOutput(s);
+				}
+				if (jsonEvent.get("event_type").equals("view")) {
 					results += 1;
 				}
 			}

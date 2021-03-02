@@ -8,11 +8,12 @@ import org.apache.flink.streaming.api.operators.aion.diststore.DistStoreManager;
 import org.apache.flink.streaming.api.operators.aion.estimators.WindowSizeEstimator;
 import org.apache.flink.streaming.api.operators.aion.sampling.AbstractSSlackAlg;
 import org.apache.flink.streaming.api.operators.aion.sampling.KSlackNoSampling;
-import org.apache.flink.streaming.api.windowing.windows.Window;
 import org.apache.flink.streaming.runtime.tasks.ProcessingTimeService;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import java.io.BufferedWriter;
+import java.io.FileWriter;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -30,6 +31,7 @@ import static org.apache.flink.streaming.api.operators.aion.diststore.DistStoreM
  */
 public final class WindowSSlackManager {
 
+
 	protected static final Logger LOG =
 		LoggerFactory.getLogger(WindowSSlackManager.class);
 
@@ -45,6 +47,7 @@ public final class WindowSSlackManager {
 	private final int numberSSPerWindow;
 	/* Watermarks. */
 	private long lastEmittedWatermark = Long.MIN_VALUE;
+	private long lastEmittedWindowWatermark = Long.MIN_VALUE;
 	/* Structures to maintain distributions & diststore. */
 	private final DistStoreManager netDelayStoreManager;
 	private final DistStoreManager interEventStoreManager;
@@ -58,6 +61,7 @@ public final class WindowSSlackManager {
 	/* Stats purger */
 	//private final Thread timestampsPurger;
 	private boolean isWarmedUp;
+	protected BufferedWriter writer;
 
 	public WindowSSlackManager(
 		final ProcessingTimeService processingTimeService,
@@ -89,6 +93,12 @@ public final class WindowSSlackManager {
 		this.watEmissionTimes = new PriorityQueue<>();
 		this.watDelays = new DescriptiveStatisticsHistogram(STATS_SIZE);
 		this.isPrintingStats = false;
+		try {
+			writer = new BufferedWriter(new FileWriter("late_events.txt", false));
+			writer.write("uniqueId" + ",timestamp" + ",LastEmittedWatermark" +  ",windowEndTime\n");
+		}catch(Exception e){
+			e.printStackTrace();
+		}
 
 	}
 
@@ -117,10 +127,24 @@ public final class WindowSSlackManager {
 		return lastEmittedWatermark;
 	}
 
-	public void setLastEmittedWatermark(long targetWatermark) {
+	/* returns 1 if new watermark changes the current active window
+	* ie. if lastEmittedWindowWatermark changes, return 1. 0 otherwise */
+	public int setLastEmittedWatermark(long targetWatermark) {
 		if (targetWatermark > lastEmittedWatermark){
 			lastEmittedWatermark = targetWatermark;
+
+			long tmp = lastEmittedWatermark/windowLength;
+			tmp = tmp*windowLength;
+			if (lastEmittedWindowWatermark < tmp){
+				lastEmittedWindowWatermark = tmp;
+				return 1;
+			}
 		}
+		return 0;
+	}
+
+	public long getLastEmittedWindowWatermark(){
+		return lastEmittedWindowWatermark;
 	}
 
 	AbstractSSlackAlg getsSlackAlg() {
@@ -185,99 +209,49 @@ public final class WindowSSlackManager {
 		watEmissionTimes.add(watermark);
 	}
 
+	void writeToOutput(String s){
+		try {
+			writer.write(s);
+		}catch (Exception e){
+			e.printStackTrace();
+		}
+	}
+
 	public void printStats() {
 		if (this.isPrintingStats) {
 			return;
 		}
+		BufferedWriter writer2;
+		try {
+			String slack_results_file = "slack_results.txt";
+			writer2 = new BufferedWriter(new FileWriter(slack_results_file, false));
+			this.isPrintingStats = true;
+			StringBuilder sb = new StringBuilder();
 
-		this.isPrintingStats = true;
-		StringBuilder sb = new StringBuilder();
-		// This is gonna be a length function.
-		//sb.append("Number of Windows observed:\t").append(windowsCounter.getCount()).append("\n");
-		//sb.append("===\n");
+			List<WindowSSlack> windows = new ArrayList<>(windowSlacksMap.values());
+			windows.sort((left, right) -> (int) (left.getWindowIndex() - right.getWindowIndex()));
 
-		List<WindowSSlack> windows = new ArrayList<>(windowSlacksMap.values());
-		windows.sort((left, right) -> (int) (left.getWindowIndex() - right.getWindowIndex()));
-
-		ArrayList<WindowSSlack> results = new ArrayList<>();
+			ArrayList<WindowSSlack> results = new ArrayList<>();
+			results.addAll(windows);
+		/*
 		for (WindowSSlack window : windows) {
-			/*
-			HistogramStatistics numOfEvents = window.getEventsPerSSHisto().getStatistics();
-			HistogramStatistics sr = window.getSamplingRatePerSSHisto().getStatistics();
-
-			sb.append("Window:\t").append(window.getWindowIndex()).append("\n");
-			sb.append("Number of Events per SS:\t")
-				.append(numOfEvents.size()).append("\t")
-				.append(numOfEvents.getMean()).append("\t")
-				.append(numOfEvents.getStdDev()).append("\n");
-			sb.append("Sampling Rate per SS:\t")
-				.append(sr.size()).append("\t")
-				.append(sr.getMean()).append("\t")
-				.append(sr.getStdDev()).append("\n");
-			sb.append("===\n");
-			 */
 			sb.append("Start Time:\t").append(window.startOfWindowTime).append("\n");
 			sb.append("Events Processed\t").append(window.total_real_events).append("\n");
 			sb.append("View Events\t").append(window.total_real_view_events).append("\n");
 			sb.append("=============").append("\n");
-			results.add(window);
-
 		}
-		for (WindowSSlack w: results){
-			sb.append("(").append(w.getWindowIndex()).append(",")
-				.append(w.total_real_view_events).append(",").append(w.results).append(")\n");
-		}
-		System.out.println(sb.toString());
-
-		/*
-		sb = new StringBuilder();
-
-		// Algorithm
-		HistogramStatistics algSizeError = getsSlackAlg().getSizeEstimationStatistics();
-		HistogramStatistics algSRError = getsSlackAlg().getSREstimationStatistics();
-		Histogram histogram = new DescriptiveStatisticsHistogram(STATS_SIZE);
-		if (!watEmissionTimes.isEmpty()) {
-			long timestamp = watEmissionTimes.poll();
-			while (!watEmissionTimes.isEmpty()) {
-				histogram.update(watEmissionTimes.peek() - timestamp);
-				timestamp = watEmissionTimes.poll();
-			}
-		}
-		HistogramStatistics algWatFreq = histogram.getStatistics();
-		HistogramStatistics algDelays = watDelays.getStatistics();
-		sb.append("Algorithm Stats:\n");
-		sb.append("Size Error Estimation:\t")
-			.append(algSizeError.size()).append("\t")
-			.append(algSizeError.getMean()).append("\t")
-			.append(algSizeError.getStdDev()).append("\n");
-		sb.append("Sampling-Rate Error Estimation:\t")
-			.append(algSRError.size()).append("\t")
-			.append(algSRError.getMean()).append("\t")
-			.append(algSRError.getStdDev()).append("\n");
-		sb.append("Watermark Frequency:\t")
-			.append(algWatFreq.size()).append("\t")
-			.append(algWatFreq.getMean()).append("\t")
-			.append(algWatFreq.getStdDev()).append("\n");
-		sb.append("Watermark Delays:\t")
-			.append(algDelays.size()).append("\t")
-			.append(algDelays.getMean()).append("\t")
-			.append(algDelays.getStdDev()).append("\n");
-		sb.append("===\n");
-		// Network & Inter-Event Gen Delays
-		HistogramStatistics netDelay = netDelayStoreManager.getMeanDelay();
-		HistogramStatistics interEventDelay = interEventStoreManager.getMeanDelay();
-		sb.append("Delays:\n");
-		sb.append("Net Delay:\t")
-			.append(netDelay.size()).append("\t")
-			.append(netDelay.getMean()).append("\t")
-			.append(netDelay.getStdDev()).append("\n");
-		sb.append("Inter-Event Generation Delay:\t")
-			.append(interEventDelay.size()).append("\t")
-			.append(interEventDelay.getMean()).append("\t")
-			.append(interEventDelay.getStdDev()).append("\n");
-		sb.append("===\n");
-		System.out.println(sb.toString());
 		 */
+			sb.append("(window, total_real_view_events, results, straggler events)").append("\n");
+			for (WindowSSlack w: results){
+				sb.append("(").append(w.getWindowIndex()).append(",")
+					.append(w.total_real_view_events).append(",").append(w.results).append(",").append(w.straggler_events).append(")\n");
+			}
+			writer2.write(sb.toString());
+			writer.close();
+			writer2.close();
+		}catch(Exception e){
+			e.printStackTrace();
+		}
 	}
 
 
