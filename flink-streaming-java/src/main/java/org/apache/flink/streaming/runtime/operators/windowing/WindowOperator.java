@@ -40,6 +40,7 @@ import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.api.java.tuple.Tuple5;
 import org.apache.flink.api.java.typeutils.TypeExtractor;
 import org.apache.flink.api.java.typeutils.runtime.TupleSerializer;
 import org.apache.flink.metrics.Counter;
@@ -78,6 +79,8 @@ import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
 
+import java.io.BufferedWriter;
+import java.io.FileWriter;
 import java.io.Serializable;
 import java.util.Collection;
 import java.util.Properties;
@@ -225,9 +228,11 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
 		this.windowStateDescriptor = windowStateDescriptor;
 		this.trigger = checkNotNull(trigger);
 		this.allowedLateness = allowedLateness;
+		System.out.println("Allowed Lateness: " + allowedLateness);
 		this.lateDataOutputTag = lateDataOutputTag;
 
 		setChainingStrategy(ChainingStrategy.ALWAYS);
+
 	}
 
 	@Override
@@ -399,7 +404,6 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
 			mergingWindows.persist();
 		} else {
 			for (W window: elementWindows) {
-
 				// drop if the window is already late
 				if (isWindowLate(window)) {
 					continue;
@@ -420,16 +424,7 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
 						continue;
 					}
 
-					//Producer<byte[], byte[]> kafkaProducer = getKafkaProducer();
-					JSONObject jo = new JSONObject();
-					jo.put("WindowFired", window.toString());
-					String jsonText = jo.toString();
-
-					//System.out.println("OnEventTime Firing Window Namespace: " + window.toString());
-					//kafkaProducer.send(new ProducerRecord<>(KAFKA_TOPIC_2, jsonText.getBytes(), jsonText.getBytes()));
-
 					emitWindowContents(window, contents);
-					//System.out.println("Emitting Window at " + element.getTimestamp());
 					long start = TimeWindow.getWindowStartWithOffset(window.maxTimestamp(), 0 ,
 						Time.seconds(3).toMilliseconds());
 				}
@@ -446,13 +441,19 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
 		// late arriving tag has been set
 		// windowAssigner is event time and current timestamp + allowed lateness no less than element timestamp
 		if (isSkippedElement && isElementLate(element)) {
-			//Producer<byte[], byte[]> kafkaProducer = getKafkaProducer();
-
-			JSONObject jo = new JSONObject();
-			jo.put(element.toString(), element.toString());
-			String jsonText = jo.toString();
-			//System.out.println("Skipped Element : " + jsonText);
-			//kafkaProducer.send(new ProducerRecord<>(KAFKA_TOPIC_2, jsonText.getBytes(), jsonText.getBytes()));
+			/*
+			for (W window : elementWindows){
+				if (element.getValue() instanceof Tuple5) {
+					Tuple5<String, String, String, Boolean, String> t5 = (Tuple5<String, String, String, Boolean, String>) element.getValue();
+					String uniqueId = t5.f4;
+					if (uniqueId != null) {
+						System.out.println("late," + uniqueId + "," + element.getTimestamp() + ","
+							+ internalTimerService.currentWatermark() + ","
+							+ window.maxTimestamp());
+					}
+				}
+			}
+			 */
 
 			if (lateDataOutputTag != null){
 				sideOutput(element);
