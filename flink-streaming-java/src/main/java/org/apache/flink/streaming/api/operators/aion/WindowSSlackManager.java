@@ -266,9 +266,9 @@ public final class WindowSSlackManager {
 						.append("(")
 						.append(w.getWindowIndex())
 						.append(",")
-						.append(w.sum_only_real/w.total_real_events)
+						.append(w.sum_only_real)
 						.append(",")
-						.append(w.sum/(w.total_real_events + w.total_fake_events))
+						.append(w.sum)
 						.append(",")
 						.append(w.straggler_events)
 						.append(")\n");
