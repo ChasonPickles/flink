@@ -23,7 +23,10 @@ public class WindowSSlack {
 	public long total_fake_events;
 	public long fake_events_stragglers;
 	public int straggler_events;
-	public int results;
+	public int expected_view_events;
+
+	public double sum;
+	public double sum_only_real;
 
 	/* Identifiers for WindowSS */
 	private final long windowIndex;
@@ -183,7 +186,7 @@ public class WindowSSlack {
 		return sampledEvents[localSSIndex] + shedEvents[localSSIndex];
 	}
 
-	public void processEvent(JSONObject jsonEvent, long timestamp) {
+	public void processEventYSB(JSONObject jsonEvent, long timestamp) {
 		if (!jsonEvent.has("fake")){
 			total_real_events += 1;
 			if (jsonEvent.get("event_type").equals("view")){
@@ -205,10 +208,24 @@ public class WindowSSlack {
 					sSlackManager.writeToOutput(s);
 				}
 				if (jsonEvent.get("event_type").equals("view")) {
-					results += 1;
+					expected_view_events += 1;
 				}
 			}
 		}
+	}
+
+	public void processEventNYT(JSONObject jsonEvent, long timestamp) {
+		double fare_amount = Double.parseDouble(jsonEvent.getString("fare_amount"));
+		if (!jsonEvent.has("fake")){
+			total_real_events += 1;
+			sum_only_real += fare_amount;
+			if(timestamp < sSlackManager.getLastEmittedWindowWatermark()){
+				straggler_events++;
+			}
+		}else{
+			total_fake_events += 1;
+		}
+		sum += fare_amount;
 	}
 
 	/* Metrics */

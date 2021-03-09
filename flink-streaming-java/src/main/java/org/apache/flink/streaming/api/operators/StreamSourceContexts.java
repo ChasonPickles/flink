@@ -59,6 +59,7 @@ public class StreamSourceContexts {
 	private static final long WINDOW_LENGTH = 3000;
 	private static final long SS_LENGTH = 600; // 600 milliseconds
 	private static final long MAX_NET_DELAY = 600;
+	private static String WORKLOAD_TYPE = "nyt";
 
 	/**
 	 * Depending on the {@link TimeCharacteristic}, this method will return the adequate
@@ -88,7 +89,8 @@ public class StreamSourceContexts {
 							processingTimeService,
 							WINDOW_LENGTH,
 							SS_LENGTH,
-							(int) Math.ceil(WINDOW_LENGTH / (SS_LENGTH * 1.0))),
+							(int) Math.ceil(WINDOW_LENGTH / (SS_LENGTH * 1.0)),
+							WORKLOAD_TYPE),
 						checkpointLock,
 						watermarkInterval,
 						streamStatusMaintainer,
@@ -261,7 +263,11 @@ public class StreamSourceContexts {
 					output.collect(reuse.replace(element, timestamp));
 				}
 			}else{
-				window.processEvent(jo_2, timestamp);
+				if(WORKLOAD_TYPE.equals("ysb")){
+					window.processEventYSB(jo_2, timestamp);
+				}else if (WORKLOAD_TYPE.equals("nyt")){
+					window.processEventNYT(jo_2, timestamp);
+				}
 				lastRecordTime = timestamp; // just a regular event
 				watTarget = window.emitWatermark(lastRecordTime);
 				output.collect(reuse.replace(element, timestamp));

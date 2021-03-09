@@ -62,12 +62,14 @@ public final class WindowSSlackManager {
 	//private final Thread timestampsPurger;
 	private boolean isWarmedUp;
 	protected BufferedWriter writer;
+	public String workloadType;
 
 	public WindowSSlackManager(
 		final ProcessingTimeService processingTimeService,
 		final long windowLength,
 		final long ssLength,
-		final int numberSSPerWindow) {
+		final int numberSSPerWindow,
+		final String workloadType) {
 		this.processingTimeService = processingTimeService;
 
 		this.windowLength = windowLength;
@@ -93,6 +95,7 @@ public final class WindowSSlackManager {
 		this.watEmissionTimes = new PriorityQueue<>();
 		this.watDelays = new DescriptiveStatisticsHistogram(STATS_SIZE);
 		this.isPrintingStats = false;
+		this.workloadType = workloadType;
 		try {
 			writer = new BufferedWriter(new FileWriter("late_events.txt", false));
 			writer.write("uniqueId" + ",timestamp" + ",LastEmittedWatermark" +  ",windowEndTime\n");
@@ -242,9 +245,34 @@ public final class WindowSSlackManager {
 		}
 		 */
 			sb.append("(window, total_real_view_events, results, straggler events)").append("\n");
-			for (WindowSSlack w: results){
-				sb.append("(").append(w.getWindowIndex()).append(",")
-					.append(w.total_real_view_events).append(",").append(w.results).append(",").append(w.straggler_events).append(")\n");
+			if(workloadType.equals("ysb")) {
+				sb.append("workload type: ysb\n");
+				sb.append(results.size()  + ": \n");
+				for (WindowSSlack w : results) {
+					sb
+						.append("(")
+						.append(w.getWindowIndex())
+						.append(",")
+						.append(w.total_real_view_events)
+						.append(",")
+						.append(w.expected_view_events)
+						.append(",")
+						.append(w.straggler_events)
+						.append(")\n");
+				}
+			}else if (workloadType.equals("nyt")) {
+				for (WindowSSlack w : results) {
+					sb
+						.append("(")
+						.append(w.getWindowIndex())
+						.append(",")
+						.append(w.sum_only_real/w.total_real_events)
+						.append(",")
+						.append(w.sum/(w.total_real_events + w.total_fake_events))
+						.append(",")
+						.append(w.straggler_events)
+						.append(")\n");
+				}
 			}
 			writer2.write(sb.toString());
 			writer.close();
