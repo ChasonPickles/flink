@@ -226,7 +226,7 @@ public final class WindowSSlackManager {
 		}
 		BufferedWriter writer2;
 		try {
-			String slack_results_file = "slack_results.txt";
+			String slack_results_file = "results_real.txt";
 			writer2 = new BufferedWriter(new FileWriter(slack_results_file, false));
 			this.isPrintingStats = true;
 			StringBuilder sb = new StringBuilder();
