@@ -236,16 +236,9 @@ public final class WindowSSlackManager {
 
 			ArrayList<WindowSSlack> results = new ArrayList<>();
 			results.addAll(windows);
-		/*
-		for (WindowSSlack window : windows) {
-			sb.append("Start Time:\t").append(window.startOfWindowTime).append("\n");
-			sb.append("Events Processed\t").append(window.total_real_events).append("\n");
-			sb.append("View Events\t").append(window.total_real_view_events).append("\n");
-			sb.append("=============").append("\n");
-		}
-		 */
-			sb.append("(window, total_real_view_events, results, straggler events)").append("\n");
+
 			if(workloadType.equals("ysb")) {
+				sb.append("(window, total_real_view_events, results, straggler events, fake events)").append("\n");
 				sb.append("workload type: ysb\n");
 				sb.append(results.size()  + ": \n");
 				for (WindowSSlack w : results) {
@@ -258,19 +251,26 @@ public final class WindowSSlackManager {
 						.append(w.expected_view_events)
 						.append(",")
 						.append(w.straggler_events)
+						.append(",")
+						.append(w.total_fake_events)
 						.append(")\n");
 				}
 			}else if (workloadType.equals("nyt")) {
+				sb.append("(window, sum_real_events, sum_expected_results, number_real_events, straggler events, fake events)").append("\n");
 				for (WindowSSlack w : results) {
 					sb
 						.append("(")
 						.append(w.getWindowIndex())
 						.append(",")
-						.append(w.sum_only_real)
+						.append(String.format("%.2f", w.sum_only_real))
 						.append(",")
-						.append(w.sum)
+						.append(String.format("%.2f", w.sum_expected))
+						.append(",")
+						.append(w.total_real_events)
 						.append(",")
 						.append(w.straggler_events)
+						.append(",")
+						.append(w.total_fake_events)
 						.append(")\n");
 				}
 			}

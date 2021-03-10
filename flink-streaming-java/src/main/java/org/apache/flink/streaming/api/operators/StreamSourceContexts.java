@@ -37,7 +37,7 @@ import org.apache.flink.streaming.runtime.streamstatus.StreamStatusMaintainer;
 import org.apache.flink.streaming.runtime.tasks.ProcessingTimeCallback;
 import org.apache.flink.streaming.runtime.tasks.ProcessingTimeService;
 import org.apache.flink.util.Preconditions;
-
+import java.util.Random;
 
 
 import org.json.JSONObject;
@@ -48,6 +48,7 @@ import java.util.Properties;
 import java.util.concurrent.ScheduledFuture;
 
 import static java.lang.Math.max;
+import static java.lang.Math.min;
 
 /**
  * Source contexts for various stream time characteristics.
@@ -59,7 +60,8 @@ public class StreamSourceContexts {
 	private static final long WINDOW_LENGTH = 3000;
 	private static final long SS_LENGTH = 600; // 600 milliseconds
 	private static final long MAX_NET_DELAY = 600;
-	private static String WORKLOAD_TYPE = "nyt";
+	private static final String WORKLOAD_TYPE = "nyt";
+	private static final long LATENESS = 100;
 
 	/**
 	 * Depending on the {@link TimeCharacteristic}, this method will return the adequate
@@ -187,9 +189,8 @@ public class StreamSourceContexts {
 		private int stragglersSinceLastWindow;
 		// We want to send a minimum of 1000 events to sdv every watermark to ensure it is training
 		// a new model frequently.
-		private int additionalEventsNeeded;
 
-		private final int SDV_TARGET = 1000;
+		private final int SDV_TARGET = 1500;
 
 		private int regEventsSentSinceLastWatermark;
 
@@ -198,6 +199,9 @@ public class StreamSourceContexts {
 		// we do not want to process too many fake events per watermark
 		private int max_fake_events;
 		private int fakeEventsProcessedSinceLastWatermark;
+		Random rand = new Random();
+		private double samplingRate = 0.33;
+		private long eventsSeenThisWindow;
 
 		private final Producer<byte[], byte[]> kafkaProducer;
 		final String KAFKA_TOPIC = "stragglers";
@@ -232,10 +236,9 @@ public class StreamSourceContexts {
 			stragglersSinceLastWindow = 0;
 			regEventsSentSinceLastWatermark = 0;
 			fakeEventsSinceLastWatermark = 0;
-			additionalEventsNeeded = 0;
 			fakeEventsProcessedSinceLastWatermark = 0;
 			max_fake_events = 0;
-
+			eventsSeenThisWindow = 0;
 			long now = this.timeService.getCurrentProcessingTime();
 			stragglerStore = new NumStragglersSSStore(windowSSlackManager.getNumberOfSSPerWindow());
 		}
@@ -258,7 +261,7 @@ public class StreamSourceContexts {
 			if(jo_2.has("fake")){
 				timestamp = windowSSlackManager.getLastEmittedWatermark()+1;
 				fakeEventsSinceLastWatermark += 1;
-				if(fakeEventsSinceLastWatermark < max_fake_events){ // have we seen too many fake events?
+				if(fakeEventsProcessedSinceLastWatermark < max_fake_events){ // have we seen too many fake events?
 					fakeEventsProcessedSinceLastWatermark += 1;
 					output.collect(reuse.replace(element, timestamp));
 				}
@@ -269,7 +272,6 @@ public class StreamSourceContexts {
 					window.processEventNYT(jo_2, timestamp);
 				}
 				lastRecordTime = timestamp; // just a regular event
-				watTarget = window.emitWatermark(lastRecordTime);
 				output.collect(reuse.replace(element, timestamp));
 
 				if (timestamp < windowSSlackManager.getLastEmittedWindowWatermark()) {
@@ -279,14 +281,15 @@ public class StreamSourceContexts {
 						element.toString().getBytes(),
 						element.toString().getBytes()));
 				}
-				else if (regEventsSentSinceLastWatermark < additionalEventsNeeded
-					&& stragglersSinceLastWindow + regEventsSentSinceLastWatermark < SDV_TARGET){
+				else if (rand.nextDouble() < samplingRate ){
 					regEventsSentSinceLastWatermark += 1;
 					kafkaProducer.send(new ProducerRecord<>(
 						KAFKA_TOPIC,
 						element.toString().getBytes(),
 						element.toString().getBytes()));
 				}
+				eventsSeenThisWindow += 1;
+				watTarget = window.emitWatermark(timestamp, LATENESS);
 			}
 
 			// do we emit watermark
@@ -306,14 +309,17 @@ public class StreamSourceContexts {
 						stragglerStore.addValue(stragglers_window_minus_two);
 					}
 
-					additionalEventsNeeded = max(0, SDV_TARGET - stragglersSinceLastWindow);
+					if (!(regEventsSentSinceLastWatermark > SDV_TARGET)){
+						// add 100 to increase chance of meeting target every window
+						samplingRate = min((SDV_TARGET*1.0 + 100) / eventsSeenThisWindow*1.0, 0.99);
+					}
+
 					// reset statistics
 					stragglersSinceLastWindow = 0;
 					regEventsSentSinceLastWatermark = 0;
 					fakeEventsSinceLastWatermark = 0;
 					fakeEventsProcessedSinceLastWatermark = 0;
 				}
-
 
 			}
 

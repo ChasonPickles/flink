@@ -25,7 +25,7 @@ public class WindowSSlack {
 	public int straggler_events;
 	public int expected_view_events;
 
-	public double sum;
+	public double sum_expected;
 	public double sum_only_real;
 
 	/* Identifiers for WindowSS */
@@ -110,10 +110,14 @@ public class WindowSSlack {
 	 *
 	 * @returns a boolean value that determines if the tuple to be included in the sample.
 	 */
-	public long emitWatermark(long timestamp) {
-		long n = (timestamp - startOfWindowTime)/sSlackManager.getSSLength();
-		assert startOfWindowTime + n*sSlackManager.getSSLength() <= timestamp;
-		return startOfWindowTime + n*sSlackManager.getSSLength();
+	public long emitWatermark(long timestamp, long LATENESS) {
+		if (startOfWindowTime > timestamp - LATENESS){
+			return startOfWindowTime - sSlackManager.getSSLength();
+		} else{
+			long n = (timestamp - LATENESS - startOfWindowTime)/sSlackManager.getSSLength();
+			assert startOfWindowTime + n*sSlackManager.getSSLength() <= timestamp;
+			return startOfWindowTime + n*sSlackManager.getSSLength();
+		}
 		/*
 		if (timestamp > startOfWindowTime) {
 			return startOfWindowTime;
@@ -219,13 +223,12 @@ public class WindowSSlack {
 		if (!jsonEvent.has("fake")){
 			total_real_events += 1;
 			sum_only_real += fare_amount;
-			if(timestamp < sSlackManager.getLastEmittedWindowWatermark()){
+			if(timestamp < sSlackManager.getLastEmittedWindowWatermark() ){
 				straggler_events++;
+			}else{
+				sum_expected += fare_amount;
 			}
-		}else{
-			total_fake_events += 1;
 		}
-		sum += fare_amount;
 	}
 
 	/* Metrics */
