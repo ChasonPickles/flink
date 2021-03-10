@@ -110,7 +110,7 @@ public class WindowSSlack {
 	 *
 	 * @returns a boolean value that determines if the tuple to be included in the sample.
 	 */
-	public long emitWatermark(long timestamp, long LATENESS) {
+	public long emitWatermark(long timestamp, int LATENESS) {
 		if (startOfWindowTime > timestamp - LATENESS){
 			return startOfWindowTime - sSlackManager.getSSLength();
 		} else{

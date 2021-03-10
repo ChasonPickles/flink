@@ -61,7 +61,7 @@ public class StreamSourceContexts {
 	private static final long SS_LENGTH = 600; // 600 milliseconds
 	private static final long MAX_NET_DELAY = 600;
 	private static final String WORKLOAD_TYPE = "nyt";
-	private static final long LATENESS = 100;
+	private static final int LATENESS = 0;
 
 	/**
 	 * Depending on the {@link TimeCharacteristic}, this method will return the adequate
