@@ -238,7 +238,7 @@ public final class WindowSSlackManager {
 			results.addAll(windows);
 
 			if(workloadType.equals("ysb")) {
-				sb.append("(window, total_real_view_events, expected_view_events, straggler events, total_real_events)").append("\n");
+				sb.append("(window, total_real_view_events, expected_view_events, total_real_events, straggler events)").append("\n");
 				sb.append("workload type: ysb\n");
 				sb.append(results.size()  + ": \n");
 				for (WindowSSlack w : results) {
